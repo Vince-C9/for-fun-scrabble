@@ -11,7 +11,13 @@ class Tile extends Model
     use HasFactory;
 
     public $fillable = [
-        'letter', 'game_id', 'coordinates', 'is_used', 'player_hand_id', 'score'
+        'letter', 
+        'game_id',
+        'x', 
+        'y', 
+        'is_used', 
+        'player_hand_id', 
+        'score'
     ];
 
     //Only pull from tiles that are already used.

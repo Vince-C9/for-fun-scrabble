@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\API\RegisterController;
 use App\Http\Controllers\API\ProductController;
 use App\Http\Controllers\GameController;
+use App\Http\Controllers\SubmitWordController;
 use App\Http\Controllers\TurnController;
 use App\Models\Game;
 
@@ -32,4 +33,7 @@ Route::prefix('game')->group(function () {
     Route::post('/create', [GameController::class, 'store'])->name('game.create');
     Route::get('turn/{game}/{player}', TurnController::class)->name('game.turn');
     Route::get('{game}', [GameController::class, 'show'])->name('game.show');
+    Route::post('{game}/player/{player}/submit', SubmitWordController::class)->name('game.submit');
+    Route::post('{game}/join', [GameController::class, 'update'])->name('game.update');
+    Route::put('{game}/player/{player}/turn', [GameController::class, 'updateTurn'])->name('game.updateTurn');
 });

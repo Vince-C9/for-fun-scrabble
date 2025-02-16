@@ -11,6 +11,14 @@ class GameWords extends Model
 {
     use HasFactory;
 
+    protected $fillable = [
+        'game_id',
+        'player_id',
+        'word',
+        'score',
+        'bonuses',
+    ];
+
     public function game(): BelongsTo
     {
         return $this->belongsTo(Game::class);

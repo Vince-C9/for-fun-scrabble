@@ -8,6 +8,12 @@ export default defineNuxtConfig({
       tailwindcss(),
     ],
   },
+  proxy: {
+    '/api/': {
+      target: 'http://localhost:8001',
+      changeOrigin: true
+    }
+  },
   modules: [
     // ...
     '@pinia/nuxt',

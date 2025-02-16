@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Game;
 use App\Models\Player;
+use App\Models\Tile;
 use App\Models\Word;
 use Illuminate\Support\Facades\Cache;
 
@@ -54,42 +55,43 @@ class ScrabbleService
             return ['error' => 'Invalid Word'];
         }
     
+        $tileBonuses=[];
         //Log each letter as used against this game, by this player.
-        foreach($wordData['letter'] as $letter) {
-            $tile = $game->tiles()->where('letter', $letter)->where('is_used', false)->first();
-            if($tile) {
-                //Set tile as used in this game
-                $tile->update(['used' => true]);
+        foreach($wordData['tiles'] as $tile) {
+            //Validate tile
+            $validTile = $game->tiles()->where('id', $tile['id'])->first();
+            if($validTile) {
+                //Relying on FE atm to get functionality done but need to make this BE authoritative in the long run.
+
+                $tileBonuses = array_merge($tileBonuses, $tile['letterBonuses']);
+
+                Tile::where('id', $tile['id'])->update([
+                    'is_used' => true,
+                    'x' => $tile['x'],
+                    'y' => $tile['y'],
+                    'player_hand_id' => null
+                ]);
+                
                 //Remove each tile from players hand
-                $player->currentTiles()->whereIn('tile_id', $wordData['letter'])->delete();
+                $player->currentTiles()->where('tile_id', $tile['id'])->delete();
             } else {
-                return ['error' => 'Unused tile of letter '.$letter.' does not exist against this game.'];
+                return ['error' => 'Unused tile of letter '.$tile['letter'].' does not exist against this game.'];
             }
         }
         
         //Save the word to players game words
-        $gameWord = $game->gameWords()->create([
+        $game->gameWords()->create([
             'player_id' => $player->id,
             'word' => Word::where('word', $wordData['word'])->first()->id,
-            'score' => $this->calculateScore($wordData['word']),
-            'bonuses' => json_encode($wordData['bonuses'])
+            'score' => $wordData['wordScore'],
+            'bonuses' => json_encode(['word' => $wordData['wordBonuses'], 'tile'=> $tileBonuses])
         ]);
         
-        
-        
-
-        $score = $this->calculateScore($wordData['word']);
+        //Make this back end authoritative, rework calculate score once all other functions in place
+        $score = $wordData['wordScore'];
 
         $player->increment('score', $score);
         return ['success'=>true, 'score'=>$score];
-    }
-
-    private function calculateScore(string $word): int {
-        $score = 0;
-        foreach (str_split(strtoupper($word)) as $letter) {
-            $score += $this->letterValues[$letter] ?? 0;
-        }
-        return $score;
     }
 
     /**
@@ -99,8 +101,8 @@ class ScrabbleService
      * @return bool
      */
     public function isValidWord(string $word): bool {
-        return Cache::remember("valid_word_{$word}", now()->addDay(), function() use ($word) {
-            return !!Word::where('word', $word)->exists();
+         return Cache::remember("valid_word_{$word}", now()->addDay(), function() use ($word) {
+            return Word::where('word', $word)->exists();
         });
     }
 
@@ -123,6 +125,6 @@ class ScrabbleService
             }
         }
         return $player->currentTiles;
-        
     }
+    
 }

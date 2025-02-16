@@ -41,3 +41,9 @@ Route::get('check-words', function(){
     }
     echo "<p>... And one or two more :)</p>";
 });
+
+Route::get('valid', function(){
+    $service = new ScrabbleService();
+    dump(Word::where('word', 'DO')->exists());
+    dd($service->isValidWord('TO'));
+});

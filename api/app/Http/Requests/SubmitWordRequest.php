@@ -24,7 +24,15 @@ class SubmitWordRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'word' => ['required', 'string', new ValidWordRule],
+            'totalScore' => ['required', 'numeric'],
+            'words' => ['required', 'array'],
+            'words.*.word' => ['required', new ValidWordRule()],
+            'words.*.wordScore' => ['required', 'numeric'],
+            'words.*.tiles' => ['required', 'array'],
+            'words.*.tiles.*.id' => ['required'],
+            'words.*.tiles.*.letter' => ['required'],
+            'words.*.tiles.*.baseScore' => ['required', 'numeric'],
+            'words.*.tiles.*.totalTileScore' => ['required', 'numeric'],
         ];
     }
 }

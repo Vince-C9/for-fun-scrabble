@@ -6,6 +6,9 @@ const api = useNuxtApp().$api;
 const route = useRoute();
 const loading = shallowRef(false);
 const playerIsInGame = shallowRef(false);
+const currentTurnWords = ref([]);
+const submittingTurn = ref(false);
+const nextPlayersTurn = ref(null);
 
 // Tile Pool (only available for active player)
 const tilePool = ref([]);
@@ -20,6 +23,8 @@ const gameDetails = ref({});
 onMounted(() => {
     getGameDetails();
     playerStore.getGamesFromLocalStorage();
+
+    api.put(`/game/${route.params.id}/player/7/turn`);
 });
 
 watch(
@@ -71,11 +76,12 @@ const getGameDetails = async () => {
             gameDetails.value = response.data.data;
             players.value = playerArrayToObject(gameDetails.value.players);
 
-            // Load placed tiles
+            // Load placed tiles with their IDs
             if (gameDetails.value.tiles) {
                 gameDetails.value.tiles.forEach((tile) => {
-                    if (!!tile.x && !!tile.y) {
+                    if (tile.x !== null && tile.y !== null) {
                         board.value[tile.y][tile.x].tile = {
+                            id: tile.id, // Ensure tileId is stored
                             letter: tile.letter,
                             score: tile.score,
                         };
@@ -83,6 +89,10 @@ const getGameDetails = async () => {
                     }
                 });
             }
+
+            activePlayerIndex.value = activePlayerIdToIndex(
+                gameDetails.value.player_turn_id
+            );
         })
         .finally(() => {
             loading.value = false;
@@ -159,15 +169,18 @@ const activePlayerIndex = ref(0);
 const currentWordScore = computed(() => {
     let totalScore = 0;
     let checkedCells = new Set(); // To track tiles already scored
+    let detectedWords = []; // Stores words detected this turn
 
     // Find the full word in a given direction
-    const findFullWord = (row, col, direction) => {
+    const findFullWord = (rowIndex, columnIndex, direction) => {
         let wordScore = 0;
         let wordMultiplier = 1;
-        let word = "";
-        //we take a copy of the row and column index to avoid modifying original board state/data.
-        let r = row,
-            c = col;
+        let wordString = "";
+        let tilesUsed = [];
+
+        // Copy row and column index to prevent modifying board state
+        let r = rowIndex,
+            c = columnIndex;
 
         // Move backward to find the start of the word
         while (r > 0 && direction === "vertical" && board.value[r - 1][c]?.tile)
@@ -180,7 +193,6 @@ const currentWordScore = computed(() => {
             c--;
 
         // Move forward to collect the word and calculate score
-        //This will include any existing tiles placed on the board.
         while (
             r < board.value.length &&
             c < board.value[r].length &&
@@ -188,52 +200,81 @@ const currentWordScore = computed(() => {
         ) {
             const cell = board.value[r][c];
 
-            if (!checkedCells.has(`${r},${c}`)) {
-                let letterScore = cell.tile.score;
+            let letterScore = cell.tile.score;
+            let letterBonuses = [];
 
-                // Apply letter bonuses
-                if (cell.bonus === "DL") letterScore *= 2;
-                if (cell.bonus === "TL") letterScore *= 3;
-
-                // Apply word bonuses
-                if (cell.bonus === "DW") wordMultiplier *= 2;
-                if (cell.bonus === "TW") wordMultiplier *= 3;
-
-                wordScore += letterScore;
-                checkedCells.add(`${r},${c}`); // Mark as scored
+            // Apply letter bonuses
+            if (cell.bonus === "DL") {
+                letterScore *= 2;
+                letterBonuses.push("DL");
+            }
+            if (cell.bonus === "TL") {
+                letterScore *= 3;
+                letterBonuses.push("TL");
             }
 
-            word += cell.tile.letter;
+            // Apply word bonuses
+            if (cell.bonus === "DW") {
+                wordMultiplier *= 2;
+                letterBonuses.push("DW");
+            }
+            if (cell.bonus === "TW") {
+                wordMultiplier *= 3;
+                letterBonuses.push("TW");
+            }
+
+            console.log("x", c, "y", r);
+            // Track tiles used
+            tilesUsed.push({
+                tileId: cell.tile.id,
+                letter: cell.tile.letter,
+                letterScore: cell.tile.score,
+                letterBonuses: letterBonuses,
+                totalTileScore: letterScore,
+                x: c,
+                y: r,
+            });
+
+            wordScore += letterScore;
+            wordString += cell.tile.letter;
+            checkedCells.add(`${r},${c}`); // Mark as scored
+
             if (direction === "horizontal") c++;
             else r++;
         }
 
-        return {
-            word,
-            score: word.length > 1 ? wordScore * wordMultiplier : 0,
-        };
+        // Only return words of length > 1
+        if (wordString.length > 1) {
+            return {
+                wordString,
+                wordScore: wordScore * wordMultiplier,
+                wordBonuses: wordMultiplier > 1 ? ["DW", "TW"] : [],
+                tiles: tilesUsed,
+            };
+        }
+        return null;
     };
 
     // Scan for new tiles placed this turn
     board.value.forEach((row, rowIndex) => {
-        row.forEach((cell, colIndex) => {
+        row.forEach((cell, columnIndex) => {
             if (
                 cell.tile &&
                 !cell.locked &&
-                !checkedCells.has(`${rowIndex},${colIndex}`)
+                !checkedCells.has(`${rowIndex},${columnIndex}`)
             ) {
                 // **Determine primary direction of the word**
                 let hasHorizontal =
-                    (colIndex > 0 &&
-                        board.value[rowIndex][colIndex - 1]?.tile) ||
-                    (colIndex < board.value[rowIndex].length - 1 &&
-                        board.value[rowIndex][colIndex + 1]?.tile);
+                    (columnIndex > 0 &&
+                        board.value[rowIndex][columnIndex - 1]?.tile) ||
+                    (columnIndex < board.value[rowIndex].length - 1 &&
+                        board.value[rowIndex][columnIndex + 1]?.tile);
 
                 let hasVertical =
                     (rowIndex > 0 &&
-                        board.value[rowIndex - 1][colIndex]?.tile) ||
+                        board.value[rowIndex - 1][columnIndex]?.tile) ||
                     (rowIndex < board.value.length - 1 &&
-                        board.value[rowIndex + 1][colIndex]?.tile);
+                        board.value[rowIndex + 1][columnIndex]?.tile);
 
                 let primaryDirection =
                     hasHorizontal && !hasVertical
@@ -245,24 +286,36 @@ const currentWordScore = computed(() => {
                 if (!primaryDirection) primaryDirection = "horizontal"; // Default
 
                 // **Score the main word**
-                const { word: mainWord, score: mainScore } = findFullWord(
+                const mainWord = findFullWord(
                     rowIndex,
-                    colIndex,
+                    columnIndex,
                     primaryDirection
                 );
-                totalScore += mainScore;
+                if (mainWord) {
+                    totalScore += mainWord.wordScore;
+                    detectedWords.push(mainWord);
+                }
 
                 // **Score perpendicular words** (formed by newly placed tile)
                 let perpendicularDirection =
                     primaryDirection === "horizontal"
                         ? "vertical"
                         : "horizontal";
-                const { word: perpendicularWord, score: perpendicularScore } =
-                    findFullWord(rowIndex, colIndex, perpendicularDirection);
-                totalScore += perpendicularScore;
+                const perpendicularWord = findFullWord(
+                    rowIndex,
+                    columnIndex,
+                    perpendicularDirection
+                );
+                if (perpendicularWord) {
+                    totalScore += perpendicularWord.wordScore;
+                    detectedWords.push(perpendicularWord);
+                }
             }
         });
     });
+
+    // Persist words found in the current turn
+    currentTurnWords.value = detectedWords;
 
     return totalScore;
 });
@@ -274,7 +327,7 @@ const startDrag = (event, tile, index) => {
 
 //Dynamically create words including existing tiles, update scores
 const placeTile = (event, row, col) => {
-    if (!isMyTurn.value) return;
+    if (!isMyTurn.value && !submittingTurn) return;
     const data = JSON.parse(event.dataTransfer.getData("tile"));
     if (data && !board.value[row][col].tile && !board.value[row][col].locked) {
         board.value[row][col].tile = data.tile;
@@ -293,17 +346,93 @@ const removeTile = (row, col) => {
 // 1. Current Word Score
 // 2. Tiles used & any bonuses applied.
 // 3. Include existing / already placed tiles.
-const submitWord = () => {
-    players.value[activePlayerIndex.value].score += currentWordScore.value;
+const submitWord = async () => {
+    submittingTurn.value = true;
+    const activePlayer = players.value[activePlayerIndex.value];
 
-    board.value.forEach((row) =>
-        row.forEach((cell) => {
-            if (cell.tile) cell.locked = true;
-        })
-    );
+    // Calculate total score for this turn
+    let totalScore = 0;
+    let wordsArray = [];
 
-    activePlayerIndex.value =
-        (activePlayerIndex.value + 1) % players.value.length;
+    currentTurnWords.value.forEach((word) => {
+        totalScore += word.wordScore;
+        wordsArray.push({
+            word: word.wordString,
+            wordScore: word.wordScore,
+
+            wordBonuses: word.wordBonuses ?? [], // Double/triple word bonuses
+            tiles: word.tiles.map((tile) => ({
+                id: tile.tileId, // Added Tile ID
+                letter: tile.letter,
+                baseScore: tile.letterScore,
+                letterBonuses: tile.letterBonuses ?? [], // Double/triple letter bonuses
+                totalTileScore: tile.totalTileScore,
+                x: tile.x,
+                y: tile.y,
+            })),
+        });
+    });
+
+    // Prepare data for backend submission
+    const moveData = {
+        totalScore: totalScore,
+        words: wordsArray,
+    };
+
+    // Submit move to backend
+    try {
+        await api
+            .post(
+                `/game/${route.params.id}/player/${loggedInPlayerId.value}/submit`,
+                moveData
+            )
+            .catch((error) => {
+                console.error("Error submitting move:", error);
+                alert(error.response.data.message);
+            })
+            .then((response) => {
+                if (response.data.status === "success") {
+                    // Increment the active player's score
+                    activePlayer.score += totalScore;
+
+                    board.value.forEach((row) => {
+                        row.forEach((cell) => {
+                            if (cell.tile) cell.locked = true;
+                        });
+                    });
+                    getPlayerTilesFromServer();
+                    // Cycle to the next player
+                    activePlayerIndex.value =
+                        (activePlayerIndex.value + 1) % players.value.length;
+
+                    console.log("ACTIVE PLAYER INDEX SOFT", activePlayerIndex);
+                    nextPlayersTurn.value = activePlayerIndexToPlayerId(
+                        activePlayerIndex.value
+                    );
+                    console.log(
+                        "The Next Player ID is: ",
+                        nextPlayersTurn.value
+                    );
+                    //Update player turn on back end
+                    api.put(
+                        `/game/${route.params.id}/player/${nextPlayersTurn.value}/turn`
+                    );
+                }
+            })
+            .finally(() => {
+                submittingTurn.value = false;
+            });
+    } catch (error) {
+        console.error("Error submitting move:", error);
+    }
+};
+
+const activePlayerIndexToPlayerId = (index) => {
+    return players.value[index].id;
+};
+const activePlayerIdToIndex = (id) => {
+    console.log("Mapping id to index", id, players.value);
+    return players.value.findIndex((p) => p.id === id);
 };
 
 // Bonus Class Logic
@@ -325,7 +454,7 @@ const getBonusClass = (row, col) =>
 
             <!-- Active Player Score Display -->
             <div
-                v-if="isMyTurn"
+                v-if="isMyTurn && !submittingTurn"
                 class="mb-4 px-6 py-2 bg-yellow-400 text-black font-bold text-lg rounded shadow"
             >
                 Current Score: {{ currentWordScore ?? 0 }}
@@ -338,7 +467,10 @@ const getBonusClass = (row, col) =>
             </div>
 
             <!-- Tile Pool (Only for Active Player) -->
-            <div v-if="isMyTurn" class="flex flex-col items-center mb-6">
+            <div
+                v-if="isMyTurn && !submittingTurn"
+                class="flex flex-col items-center mb-6"
+            >
                 <h2 class="text-lg font-bold mb-3">Tile Pool</h2>
                 <div
                     class="grid grid-cols-7 gap-2 p-4 bg-white shadow rounded-lg"
@@ -376,16 +508,20 @@ const getBonusClass = (row, col) =>
                             cell.tile
                                 ? 'bg-yellow-400 text-black shadow-lg cursor-pointer'
                                 : getBonusClass(rowIndex, colIndex),
-                            !isMyTurn ? 'opacity-50 cursor-not-allowed' : '', // Restrict interaction
+                            !isMyTurn || submittingTurn
+                                ? 'opacity-50 cursor-not-allowed'
+                                : '', // Restrict interaction
                         ]"
                         @dragover.prevent
                         @drop="
-                            isMyTurn
+                            isMyTurn && !submittingTurn
                                 ? placeTile($event, rowIndex, colIndex)
                                 : null
                         "
                         @click="
-                            isMyTurn ? removeTile(rowIndex, colIndex) : null
+                            isMyTurn && !submittingTurn
+                                ? removeTile(rowIndex, colIndex)
+                                : null
                         "
                     >
                         {{ cell.tile?.letter || cell.bonus }}
@@ -402,12 +538,13 @@ const getBonusClass = (row, col) =>
 
             <!-- Submit Button -->
             <button
-                v-if="isMyTurn"
-                class="mt-6 px-6 py-2 bg-blue-500 text-white font-bold rounded shadow hover:bg-blue-700 transition"
+                v-if="isMyTurn && !submittingTurn"
+                class="cursor-pointer mt-6 px-6 py-2 bg-blue-500 text-white font-bold rounded shadow hover:bg-blue-700 transition"
                 @click="submitWord"
             >
                 Submit Word
             </button>
+            <Loader v-show="submittingTurn" />
         </div>
 
         <!-- Player List (Right Sidebar) -->
@@ -432,6 +569,56 @@ const getBonusClass = (row, col) =>
                     >
                 </li>
             </ul>
+            <hr class="mt-6 mb-6" />
+            <!-- Current Turn Words Display -->
+            <div>
+                <h3 class="text-lg font-bold text-gray-700 border-b pb-2">
+                    Words This Turn
+                </h3>
+                <ul v-if="currentTurnWords.length" class="mt-2 space-y-4">
+                    <li
+                        v-for="word in currentTurnWords"
+                        :key="word.wordString"
+                        class="p-3 bg-blue-100 rounded-md shadow-sm"
+                    >
+                        <div class="flex justify-between items-center">
+                            <strong class="text-blue-700 text-lg">{{
+                                word.wordString
+                            }}</strong>
+                            <span class="text-green-600 font-bold"
+                                >{{ word.wordScore }} pts</span
+                            >
+                        </div>
+
+                        <!-- Tile Details -->
+                        <ul class="mt-2 space-y-1 text-sm text-gray-700">
+                            <li
+                                v-for="tile in word.tiles"
+                                :key="tile.tileId"
+                                class="flex justify-between items-center p-2 bg-white rounded-md shadow-sm"
+                            >
+                                <span class="font-semibold text-gray-900">{{
+                                    tile.letter
+                                }}</span>
+                                <div class="flex items-center space-x-2">
+                                    <span class="text-blue-500 font-medium"
+                                        >{{ tile.totalTileScore }} pts</span
+                                    >
+                                    <span
+                                        v-if="tile.letterBonuses.length"
+                                        class="text-xs bg-yellow-200 text-yellow-800 px-2 py-1 rounded-md"
+                                    >
+                                        {{ tile.letterBonuses.join(", ") }}
+                                    </span>
+                                </div>
+                            </li>
+                        </ul>
+                    </li>
+                </ul>
+                <p v-else class="text-gray-500 italic mt-2">
+                    No words played this turn.
+                </p>
+            </div>
         </div>
     </div>
 </template>

@@ -14,6 +14,7 @@ return new class extends Migration
         Schema::create('games', function (Blueprint $table) {
             $table->id();
             $table->string('state');
+            $table->integer('player_turn_id')->default(1);
             $table->timestamps();
         });
     }
